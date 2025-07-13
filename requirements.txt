@@ -1,0 +1,4 @@
+pendulum
+astral
+numpy
+numpy-quaternion
