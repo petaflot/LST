@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools >= 77.0.3", "pendulum", "astral"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "LST_petaflot"
+version = "0.0.1"
+authors = [
+  { name="petaflot", email="author@example.com" },
+]
+description = "Local Solar Timezone"
+readme = "README.md"
+requires-python = ">=3.9"	# possibly lower
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "CC-BY-NC-SA-4.0"
+license-files = ["LICENSE.txt"]
+
+[project.urls]
+Homepage = "https://github.com/petaflot/LST/"
+Issues = "https://github.com/petaflot/LST/issues/"

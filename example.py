@@ -1,8 +1,6 @@
 #!/usr/sbin/env python
 # vim: noet ts=4 number
 
-from LST import LST, dummy_position
-
 """
 	The Times of the Beginning and End of the Five Daily Prayers
 
@@ -67,7 +65,9 @@ else:
 
 if __name__ == '__main__':
 	from threading import Thread
-	lst = LST( dummy_position() )
+	from LST import LST, dummy_location
+
+	lst = LST( dummy_location() )
 	print(f"You are here: {lst.where.name} ({lst.where.region})")
 
 	lst.event_add(prayertimes)

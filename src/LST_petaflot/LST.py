@@ -5,18 +5,16 @@
 """
 import pendulum
 from datetime import timedelta
-from astral import LocationInfo
-from astral.sun import sun
-#from astral.moon import moon
+from astral import Observer
+from astral.sun import sun as Sun
 import time
-import asyncio
 
-import numpy as np
-try:
-	import quaternion
-except ImportError as e:
-	from sys import stderr
-	print(f"{e}: package 'numpy-quaternion' is required", file=stderr)
+#import numpy as np
+#try:
+#	import quaternion
+#except ImportError as e:
+#	from sys import stderr
+#	print(f"{e}: package 'numpy-quaternion' is required", file=stderr)
 
 class TimezoneLockedError(Exception):
 	"""
@@ -49,12 +47,12 @@ class LST(pendulum.Timezone):
 
 			TODO: exact sunrise and sunset times with angle of the horizon a the spot ; requires a function that varies throughout
 			the year
-			TODO: cleanup altitude-related stuff
 		"""
 		if type(pos_update_func) is tuple:
 			location_info, lat_long, altitude = pos_update_func
-			self.where = LocationInfo(*location_info, 'UTC', *lat_long)
-			self.where.altitude = altitude
+			#self.where = LocationInfo(*location_info, 'UTC', *lat_long)
+			self.location = location_info
+			self.where = Observer(*lat_long, altitude)
 		else:
 			self._pos_update_func = pos_update_func
 			self.update()
@@ -134,7 +132,7 @@ class LST(pendulum.Timezone):
 		if self._update_interval is False:
 			return dt.replace(tzinfo=self)
 		else:
-			tz = LST(((self.where.name, self.where.region), (self.where.latitude, self.where.longitude), self.where.altitude))
+			tz = LST((self.location, (self.where.latitude, self.where.longitude), self.where.elevation))
 			return dt.replace(tzinfo=tz)
 			
 	
@@ -179,13 +177,13 @@ class LST(pendulum.Timezone):
 	def key(self):
 		"""
 		we could return '/'.join([self.where.name,self.where.region]) BUT this is likely to have collisions
-		with standard timezones keys
+		with standard timezones keys ; instead we chose to return this info in self.name
 		"""
 		return 'LST'
 	
 	@property
 	def name(self):
-		return self.key
+		return '/'.join([self.where.region, self.where.name])
 
 	# err... what does this no anyway? same for clear_cache...
 	#no_cache(key) class method of pendulum.tz.timezone.Timezone
@@ -223,33 +221,40 @@ class LST(pendulum.Timezone):
 		now = self.now()
 		return self.datetime(now.year, now.month, now.day, 0,0,0,0)
 
-	def update(self):
+	def update(self, pos = None):
 		"""
-			update offsets based on date and position
+			update offsets based on date and position ; can be either called periodically by self (will call self.point) or
+			be called externally with a 'pos' argument
 
 			FYI: 1km on the equator is about 450[ms] offset in solar time
 		"""
 		if self.update_interval is False:
 			raise TimezoneLockedError
 
-		try:
-			location_info, lat_long, altitude = self._pos_update_func()
-			self.where = LocationInfo(*location_info, 'UTC', *lat_long)
-			self.where.altitude = altitude
-		except AttributeError:
-			# location was passed as a tuple (not a function), we only allow one update)
-			self.update_interval = False
+		if pos is None:
+			try:
+				location_info, lat_long, altitude = self._pos_update_func()
+				self.where = Observer(*lat_long, altitude)
+				self.location = location_info
+			except AttributeError:
+				# location was passed as a tuple (not a function), we only allow one update)
+				self.update_interval = False
+		else:
+			location_info, lat_long, altitude = pos
+			self.where = Observer(*lat_long, altitude)
+			self.location = location_info
 
-		self.pos = np.quaternion(1., self.where.latitude, self.where.longitude, self.where.altitude)
-		self.pos.normalized()	# TODO normalize so that altitude changes are negligible
+		# TODO only update self.sun if position changed significantly (see self.pos quaternion above), or day changed
+		#self.pos = np.quaternion(1., self.where.latitude, self.where.longitude, self.where.altitude)
+		#self.pos.normalized()	# TODO normalize so that altitude changes are negligible
 			
 		# local noon offset relative to UTC
-		# TODO only update self.sun if position changed significantly (see self.pos quaternion above), or day changed
 		now = pendulum.now()
-		sun_tomorrow = sun(self.where.observer, date=now+timedelta(days=1))
-		sun_today = sun(self.where.observer, date=now)
+		# TODO sun yesterday! this can matter.. 
+		sun_tomorrow = Sun(self.where, date=now+timedelta(days=1))
+		sun_today = Sun(self.where, date=now)
+
 		noon = sun_today['noon']
-		# TODO make 100% sure this works every hour of the day, on every timezone!!
 		self._noon_offset = timedelta(seconds = (12-noon.hour)*3600-(noon.minute*60)-noon.second, microseconds=-noon.microsecond)
 		# deleting obsolete events
 		delete = [name for name, dt in sun_today.items() if dt < now-self.update_timedelta]
@@ -324,31 +329,41 @@ class LST(pendulum.Timezone):
 		for name, dt in sorted((self.sun|self.event_times|now).items(), key=lambda item: item[1]):
 			yield f"{'->' if name == 'Now' else ''}\t{name:<10}{self.convert(dt).strftime('%Y-%m-%d %H:%M:%S')}"
 
-def dummy_position():
+def dummy_location(index = None):
 	# this is just an example for when GPS is unavailable. values are
 	# (region, location), (latitude, longitude), altitude
-	from random import choice
-	
-	return choice((
+	choices = ((
 		(('Aiguille MIH', 'La Chaux-de-Fonds, Switzerland'), (47.10042765476871, 6.830537909805381), 1000),
-		(('Great pyramid (tip)', 'Gyzeh, Egypt'), (29.97921992508711, 31.134201381120103), 198.8), # not sure about the altitude here
-		(('Ahu Tongariki', 'Easter Island'), (-27.12560731530453, -109.27671897486), 22), # not sure either about altitude
+		(('Great pyramid (tip)', 'Gyza, Egypt'), (29.97921992508711, 31.134201381120103), 198.8), # not sure about the altitude here
+		(('Ahu Tongakiri', 'Easter Island, South Pacific Ocean'), (-27.12560731530453, -109.27671897486), 22), # not sure either about altitude
 		(('Veerabhadra Temple', 'Hampi, Karnataka, India'), (15.331628235993037, 76.46830420763662), 514),
-		(('Mount Everest', 'Tibet'), (27.988075179660846, 86.92502173497084), 8848.86),
-		(('Cook Inlet', 'North Pacific Ocean, Anchorage'), (61.126793732458395, -150.28694933121557), 0),
+		(('Mount Everest', 'Nepal, Himalaya'), (27.988075179660846, 86.92502173497084), 8848.86),
+		(('Cook Inlet', 'Anchorage, North America'), (61.126793732458395, -150.28694933121557), 0),
 		(('Uluru', 'Australia'), (-25.345058743303507, 131.03162847609963), 863),	# not sure about the exact location of the highest point
+		(('Molde','Norway'), (62.73874271153322, 7.181428824527326), 7),	# altitude is approximate
+		(('Wombat Island','Antartica'), (-67.56257032149553, 47.77256758885169), 3),
+		#(('Буустаах','Саха Өрөспүүбүлүкэтэ'), (72.52987962713195, 141.9583417089322), -1),
+		(('Wadi Al Mujib delta','Jordan'),(31.466898587642135, 35.563242264958284),-439.78),
+		(('Ulitsa Gubina/Ulitsa Bogatyreva','Якутск'),(62.0400620596081, 129.74801217766358),95),
 	))
 
-async def main(lst, delay):
-	while True:
-		await asyncio.sleep(delay)
-		print(f"You are here: {lst.where.name} ({lst.where.region})")
-		for line in lst.display():
-			print(line)
+	if index is None:
+		from random import randint
+		index = randint(0,len(choices)-1)
+	
+	return choices[index]
 
 if __name__ == '__main__':
+	async def main(lst, delay):
+		while True:
+			await asyncio.sleep(delay)
+			print(f"You are here: {lst.where.name} ({lst.where.region})")
+			for line in lst.display():
+				print(line)
+
+	import asyncio
 	from threading import Thread
-	lst = LST( dummy_position )
+	lst = LST( dummy_location )
 
 	lst.update_interval = 's'
 	T = Thread(target=lst.schedule_updates)
